@@ -54,6 +54,32 @@ Tinder/Bumble : swipe de profils, matchs, chat, gestion de profil.
    flutter run
    ```
 
+## La clé d'API dans `firebase_options.dart`
+
+GitHub signale cette clé comme un secret exposé. C'en est un au sens de son
+détecteur, pas au sens de Firebase : une clé d'API Firebase **identifie** le
+projet, elle n'ouvre aucun accès par elle-même. Elle est embarquée dans le
+bundle web de toute application Firebase, donc lisible par n'importe quel
+visiteur, dépôt public ou non. Google le documente comme un fonctionnement
+normal.
+
+**Ne la régénère pas.** Cela casserait l'application en production sans rien
+protéger, puisque la nouvelle clé serait tout aussi visible. Ferme l'alerte
+GitHub en faux positif.
+
+Ce qui protège réellement le projet, dans cet ordre :
+
+1. **Les règles de sécurité** (`firestore.rules`, `storage.rules`), qui
+   décident qui lit et écrit quoi. Elles sont déployées.
+2. **App Check**, à activer dans la console Firebase. C'est le seul vrai
+   rempart contre un client qui n'est pas ton application : sans lui, la clé
+   permet de créer des comptes en masse par appel direct à l'API, et chaque
+   compte créé passe ensuite les règles qui exigent seulement d'être connecté.
+3. **Les restrictions de clé**, dans la console Google Cloud : limiter la clé
+   aux seules API Firebase utilisées, et aux domaines qui servent l'app. Cela
+   plafonne le détournement de quota, mais un en-tête de provenance se
+   falsifie : c'est une ceinture, pas un rempart.
+
 ## Structure du projet
 
 ```

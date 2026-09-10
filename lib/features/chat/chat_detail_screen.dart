@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/constants/app_constants.dart';
 import '../../core/widgets/error_view.dart';
 import '../../core/widgets/loading_indicator.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/chat_provider.dart';
+import '../../providers/matches_provider.dart';
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
   final String matchId;
@@ -51,8 +53,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     final messagesAsync = ref.watch(chatMessagesProvider(widget.matchId));
     final myUid = ref.watch(authStateProvider).valueOrNull?.uid;
 
+    // Le match et le profil viennent des flux déjà ouverts par la liste des
+    // conversations : afficher le prénom ne coûte aucune lecture de plus.
+    final match = ref.watch(matchByIdProvider(widget.matchId));
+    final profiles = ref.watch(matchProfilesProvider).valueOrNull ?? const {};
+    final otherName = (match != null && myUid != null)
+        ? profiles[match.otherUserId(myUid)]?.name
+        : null;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Conversation')),
+      appBar: AppBar(title: Text(otherName ?? 'Conversation')),
       body: Column(
         children: [
           Expanded(
@@ -63,11 +73,29 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 if (messages.isEmpty) {
                   return const Center(child: Text('Dites bonjour 👋'));
                 }
+                // La conversation ne charge que sa fin. Si le lot est plein,
+                // c'est qu'il reste probablement de l'historique au-dessus.
+                final pageSize =
+                    ref.watch(chatPageSizeProvider(widget.matchId));
+                final mayHaveMore = messages.length >= pageSize;
+
                 return ListView.builder(
                   reverse: true,
                   padding: const EdgeInsets.all(12),
-                  itemCount: messages.length,
+                  itemCount: messages.length + (mayHaveMore ? 1 : 0),
                   itemBuilder: (context, index) {
+                    if (index == messages.length) {
+                      return Center(
+                        child: TextButton(
+                          onPressed: () => ref
+                              .read(
+                                  chatPageSizeProvider(widget.matchId).notifier)
+                              .update((size) =>
+                                  size + AppConstants.messagesPageSize),
+                          child: const Text('Charger les messages précédents'),
+                        ),
+                      );
+                    }
                     final message = messages[messages.length - 1 - index];
                     final isMine = message.isMine(myUid ?? '');
                     return Align(

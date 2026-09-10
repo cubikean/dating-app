@@ -40,6 +40,31 @@ class FirestoreService {
         );
   }
 
+  /// Charge plusieurs profils en une fois, indexés par uid.
+  ///
+  /// Sert aux écrans qui affichent une liste de matchs : ouvrir un flux
+  /// temps réel par vignette multipliait les écoutes simultanées pour des
+  /// données qui bougent rarement. `whereIn` accepte 30 valeurs par requête,
+  /// d'où le découpage.
+  Future<Map<String, UserProfile>> fetchProfiles(Iterable<String> uids) async {
+    final unique = uids.toSet().toList();
+    if (unique.isEmpty) return const {};
+
+    final profiles = <String, UserProfile>{};
+    const chunkSize = 30;
+    for (var start = 0; start < unique.length; start += chunkSize) {
+      final end =
+          start + chunkSize < unique.length ? start + chunkSize : unique.length;
+      final snapshot = await _users
+          .where(FieldPath.documentId, whereIn: unique.sublist(start, end))
+          .get();
+      for (final doc in snapshot.docs) {
+        profiles[doc.id] = UserProfile.fromMap(doc.id, doc.data());
+      }
+    }
+    return profiles;
+  }
+
   /// Renvoie un lot de profils candidats pour le swipe, en excluant
   /// l'utilisateur courant. Pour un vrai algorithme de matching (distance,
   /// préférences, utilisateurs déjà swipés...), remplacer par une Cloud
@@ -118,13 +143,23 @@ class FirestoreService {
 
   // --- Messagerie ---
 
-  Stream<List<MessageModel>> watchMessages(String matchId) {
+  /// Les `limit` messages les plus récents, rendus du plus ancien au plus
+  /// récent pour l'affichage.
+  ///
+  /// Le tri se fait en décroissant côté Firestore pour que la limite garde
+  /// la fin de la conversation : sans elle, ouvrir un chat chargeait tout
+  /// l'historique depuis le premier message.
+  Stream<List<MessageModel>> watchMessages(
+    String matchId, {
+    int limit = AppConstants.messagesPageSize,
+  }) {
     return _matches
         .doc(matchId)
         .collection(AppConstants.messagesSubcollection)
-        .orderBy('sentAt')
+        .orderBy('sentAt', descending: true)
+        .limit(limit)
         .snapshots()
-        .map((snap) => snap.docs
+        .map((snap) => snap.docs.reversed
             .map((d) => MessageModel.fromMap(d.id, d.data()))
             .toList());
   }
@@ -133,18 +168,25 @@ class FirestoreService {
     required String matchId,
     required String senderId,
     required String text,
-  }) async {
-    final messagesRef =
-        _matches.doc(matchId).collection(AppConstants.messagesSubcollection);
-    final now = DateTime.now();
-    await messagesRef.add({
+  }) {
+    final matchRef = _matches.doc(matchId);
+    final messageRef =
+        matchRef.collection(AppConstants.messagesSubcollection).doc();
+    final now = Timestamp.fromDate(DateTime.now());
+
+    // Les deux écritures partent ensemble. Séparées, un message pouvait être
+    // enregistré sans que le match soit mis à jour, laissant la liste des
+    // conversations sur un aperçu périmé et dans le mauvais ordre.
+    final batch = _db.batch();
+    batch.set(messageRef, {
       'senderId': senderId,
       'text': text,
-      'sentAt': Timestamp.fromDate(now),
+      'sentAt': now,
     });
-    await _matches.doc(matchId).update({
+    batch.update(matchRef, {
       'lastMessage': text,
-      'lastMessageAt': Timestamp.fromDate(now),
+      'lastMessageAt': now,
     });
+    return batch.commit();
   }
 }

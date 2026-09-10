@@ -46,3 +46,12 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Dépendances Node des tests de règles Firebase
+node_modules/
+
+# Cache local de Serena (la config du projet reste versionnée)
+.serena/cache/
+
+# Sorties de compilation
+/build/

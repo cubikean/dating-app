@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +13,14 @@ Future<void> main() async {
   // via `flutterfire configure` (voir README.md).
   await Firebase.initializeApp(
     options: firebase_options.DefaultFirebaseOptions.currentPlatform,
+  );
+
+  // Cache local : activé par défaut sur mobile, il doit être demandé
+  // explicitement sur le web. Sans lui, l'app est vide dès que le réseau
+  // manque. À régler avant la première lecture Firestore.
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: true,
+    cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
 
   runApp(

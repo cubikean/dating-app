@@ -18,6 +18,10 @@ class AppConstants {
   static const String matchesCollection = 'matches';
   static const String messagesSubcollection = 'messages';
 
+  /// Nombre de messages chargés d'emblée dans une conversation, et taille
+  /// d'un chargement supplémentaire quand on remonte l'historique.
+  static const int messagesPageSize = 50;
+
   // --- UI ---
   static const double defaultPadding = 16;
   static const double cardBorderRadius = 24;

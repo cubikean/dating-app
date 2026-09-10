@@ -29,8 +29,6 @@ dependencies:
   flutter_card_swiper: ^7.0.1 # pile de cartes façon Tinder
   cached_network_image: ^3.4.0
   image_picker: ^1.1.2
-  shimmer: ^3.0.0
-  flutter_svg: ^2.0.10+1
 
   # --- Utilitaires ---
   intl: ^0.19.0
@@ -43,6 +41,8 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^4.0.0
   build_runner: ^2.4.11
+  # Firestore en mémoire, pour tester les services sans émulateur ni réseau.
+  fake_cloud_firestore: ^3.0.0
 
 flutter:
   uses-material-design: true

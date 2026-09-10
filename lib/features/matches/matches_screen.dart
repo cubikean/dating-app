@@ -6,7 +6,6 @@ import '../../core/widgets/error_view.dart';
 import '../../core/widgets/loading_indicator.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/matches_provider.dart';
-import '../../providers/profile_provider.dart';
 
 /// Grille des matchs — taper sur un match ouvre directement le chat
 /// correspondant. Pour l'instant on réutilise `watchUserProfile` pour
@@ -19,6 +18,7 @@ class MatchesScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final matchesAsync = ref.watch(userMatchesProvider);
     final myUid = ref.watch(authStateProvider).valueOrNull?.uid;
+    final profiles = ref.watch(matchProfilesProvider).valueOrNull ?? const {};
 
     return Scaffold(
       appBar: AppBar(title: const Text('Mes matchs')),
@@ -41,9 +41,10 @@ class MatchesScreen extends ConsumerWidget {
             itemCount: matches.length,
             itemBuilder: (context, index) {
               final match = matches[index];
-              final otherUid = match.otherUserId(myUid);
-              final otherProfileAsync =
-                  ref.watch(_otherProfileProvider(otherUid));
+              final other = profiles[match.otherUserId(myUid)];
+              final photoUrl = (other?.photoUrls.isNotEmpty ?? false)
+                  ? other!.photoUrls.first
+                  : null;
 
               return GestureDetector(
                 onTap: () => context.push('/chats/${match.id}'),
@@ -51,20 +52,13 @@ class MatchesScreen extends ConsumerWidget {
                   children: [
                     CircleAvatar(
                       radius: 36,
-                      backgroundImage: otherProfileAsync
-                                  .valueOrNull?.photoUrls.isNotEmpty ==
-                              true
-                          ? NetworkImage(
-                              otherProfileAsync.valueOrNull!.photoUrls.first)
-                          : null,
-                      child: otherProfileAsync.valueOrNull?.photoUrls.isEmpty ??
-                              true
-                          ? const Icon(Icons.person)
-                          : null,
+                      backgroundImage:
+                          photoUrl != null ? NetworkImage(photoUrl) : null,
+                      child: photoUrl == null ? const Icon(Icons.person) : null,
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      otherProfileAsync.valueOrNull?.name ?? '...',
+                      other?.name ?? '…',
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
@@ -77,7 +71,3 @@ class MatchesScreen extends ConsumerWidget {
     );
   }
 }
-
-final _otherProfileProvider = StreamProvider.family((ref, String uid) {
-  return ref.watch(firestoreServiceProvider).watchUserProfile(uid);
-});

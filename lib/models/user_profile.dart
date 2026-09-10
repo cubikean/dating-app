@@ -32,7 +32,7 @@ class UserProfile extends Equatable {
   int get age {
     final now = DateTime.now();
     var years = now.year - birthDate.year;
-    final hasHadBirthdayThisYear = (now.month, now.day).$1 > birthDate.month ||
+    final hasHadBirthdayThisYear = now.month > birthDate.month ||
         (now.month == birthDate.month && now.day >= birthDate.day);
     if (!hasHadBirthdayThisYear) years -= 1;
     return years;

@@ -15,6 +15,7 @@ class ChatListScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final matchesAsync = ref.watch(userMatchesProvider);
     final myUid = ref.watch(authStateProvider).valueOrNull?.uid;
+    final profiles = ref.watch(matchProfilesProvider).valueOrNull ?? const {};
 
     return Scaffold(
       appBar: AppBar(title: const Text('Messages')),
@@ -31,10 +32,18 @@ class ChatListScreen extends ConsumerWidget {
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, index) {
               final match = matches[index];
+              final other = profiles[match.otherUserId(myUid)];
+              final photoUrl = (other?.photoUrls.isNotEmpty ?? false)
+                  ? other!.photoUrls.first
+                  : null;
+
               return ListTile(
-                leading: const CircleAvatar(child: Icon(Icons.person)),
-                title: Text(match
-                    .otherUserId(myUid)), // TODO: résoudre en nom via le profil
+                leading: CircleAvatar(
+                  backgroundImage:
+                      photoUrl != null ? NetworkImage(photoUrl) : null,
+                  child: photoUrl == null ? const Icon(Icons.person) : null,
+                ),
+                title: Text(other?.name ?? '…'),
                 subtitle: Text(
                   match.lastMessage ?? 'Dites bonjour 👋',
                   maxLines: 1,
