@@ -43,6 +43,62 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<void> _resetPassword() async {
+    final controller =
+        TextEditingController(text: _emailController.text.trim());
+
+    final email = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Mot de passe oublié'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.emailAddress,
+          decoration: const InputDecoration(labelText: 'Ton adresse email'),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Envoyer'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+
+    if (email == null || !mounted) return;
+    if (!email.contains('@')) {
+      showErrorSnackBar(context, "L'adresse email n'est pas valide.");
+      return;
+    }
+
+    await ref.read(authControllerProvider.notifier).sendPasswordReset(email);
+    if (!mounted) return;
+
+    final error = ref.read(authControllerProvider).asError;
+    if (error != null) {
+      showErrorSnackBar(context, authErrorMessage(error.error),
+          error: error.error);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      // Formulé sans confirmer l'existence du compte : Firebase protège
+      // contre l'énumération des adresses, autant ne pas la trahir ici.
+      const SnackBar(
+        content: Text(
+          "Si un compte existe pour cette adresse, l'email de "
+          'réinitialisation vient de partir.',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authControllerProvider);
@@ -88,7 +144,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   isLoading: authState.isLoading,
                   onPressed: _submit,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 4),
+                TextButton(
+                  onPressed: authState.isLoading ? null : _resetPassword,
+                  child: const Text('Mot de passe oublié ?'),
+                ),
                 TextButton(
                   onPressed: () => context.push('/register'),
                   child: const Text('Pas encore de compte ? Inscris-toi'),

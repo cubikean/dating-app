@@ -13,6 +13,7 @@ class ProfileScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final profileAsync = ref.watch(currentUserProfileProvider);
+    final isBusy = ref.watch(authControllerProvider).isLoading;
 
     return Scaffold(
       appBar: AppBar(
@@ -80,10 +81,68 @@ class ProfileScreen extends ConsumerWidget {
                 onTap: () =>
                     ref.read(authControllerProvider.notifier).signOut(),
               ),
+              ListTile(
+                leading: Icon(Icons.delete_forever,
+                    color: Theme.of(context).colorScheme.error),
+                title: Text(
+                  'Supprimer mon compte',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                subtitle: const Text(
+                  'Efface définitivement ton profil, tes photos, tes matchs '
+                  'et tes conversations.',
+                ),
+                trailing: isBusy
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : null,
+                onTap: isBusy ? null : () => _confirmDelete(context, ref),
+              ),
             ],
           );
         },
       ),
     );
   }
+}
+
+/// Confirmation avant suppression définitive. Le texte énumère ce qui part,
+/// pour que personne ne découvre après coup ce qu'il a perdu.
+Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Supprimer ton compte ?'),
+      content: const Text(
+        'Ton profil, tes photos, tes matchs et tes conversations seront '
+        'effacés définitivement. Les personnes avec qui tu as échangé ne '
+        'retrouveront plus ces conversations. Cette action est irréversible.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Annuler'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.error,
+            foregroundColor: Theme.of(context).colorScheme.onError,
+          ),
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Supprimer'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+
+  await ref.read(authControllerProvider.notifier).deleteAccount();
+  final error = ref.read(authControllerProvider).asError;
+  if (error != null && context.mounted) {
+    showErrorSnackBar(context, 'Suppression impossible.', error: error.error);
+  }
+  // En cas de succès, le router bascule seul vers l'écran de connexion.
 }

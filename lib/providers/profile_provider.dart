@@ -2,7 +2,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/user_profile.dart';
 import '../services/firestore_service.dart';
+import '../services/location_service.dart';
 import 'auth_provider.dart';
+
+final locationServiceProvider =
+    Provider<LocationService>((ref) => LocationService());
 
 final firestoreServiceProvider =
     Provider<FirestoreService>((ref) => FirestoreService());

@@ -15,7 +15,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc,
-  collection, collectionGroup, query, where, getDocs, addDoc,
+  collection, collectionGroup, query, where, getDocs, addDoc, deleteField,
 } from 'firebase/firestore';
 import { readFileSync } from 'node:fs';
 
@@ -32,15 +32,23 @@ const testEnv = await initializeTestEnvironment({
   firestore: { rules: readFileSync(RULES, 'utf8'), host, port: Number(port) },
 });
 
+/** Date de naissance située `n` annees en arriere, decalee de `offsetDays`. */
+function yearsAgo(n, offsetDays = 0) {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - n);
+  d.setDate(d.getDate() + offsetDays);
+  return d;
+}
+
 await testEnv.clearFirestore();
 await testEnv.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
-  await setDoc(doc(db, 'users', ALICE), { displayName: 'Alice' });
-  await setDoc(doc(db, 'users', BOB), { displayName: 'Bob' });
+  await setDoc(doc(db, 'users', ALICE), { displayName: 'Alice', birthDate: yearsAgo(30) });
+  await setDoc(doc(db, 'users', BOB), { displayName: 'Bob', birthDate: yearsAgo(31) });
   // Bob et Carol ont liké Alice ; Dave non.
-  await setDoc(doc(db, 'swipes', BOB, 'actions', ALICE), { liked: true });
-  await setDoc(doc(db, 'swipes', CAROL, 'actions', ALICE), { liked: true });
-  await setDoc(doc(db, 'swipes', DAVE, 'actions', ALICE), { liked: false });
+  await setDoc(doc(db, 'swipes', BOB, 'actions', ALICE), { liked: true, targetUid: ALICE });
+  await setDoc(doc(db, 'swipes', CAROL, 'actions', ALICE), { liked: true, targetUid: ALICE });
+  await setDoc(doc(db, 'swipes', DAVE, 'actions', ALICE), { liked: false, targetUid: ALICE });
   await setDoc(doc(db, 'matches', MATCH_AB), { users: [ALICE, BOB], createdAt: new Date() });
   await setDoc(doc(db, 'matches', MATCH_AB, 'messages', 'm1'), {
     senderId: BOB, text: 'salut', sentAt: new Date(),
@@ -72,19 +80,39 @@ console.log('\n[ profils ]');
 await t('un membre liste les profils (decouverte)', 'ok', () => getDocs(collection(as(ALICE), 'users')));
 await t('un membre lit le profil d un autre', 'ok', () => getDoc(doc(as(ALICE), 'users', BOB)));
 await t('ecriture de son propre profil', 'ok',
-  () => setDoc(doc(as(ALICE), 'users', ALICE), { displayName: 'Alice B.' }, { merge: true }));
+  () => setDoc(doc(as(ALICE), 'users', ALICE),
+    { displayName: 'Alice B.', birthDate: yearsAgo(30) }, { merge: true }));
 await t('ecriture du profil d un autre refusee', 'ko',
-  () => setDoc(doc(as(ALICE), 'users', BOB), { displayName: 'pirate' }, { merge: true }));
+  () => setDoc(doc(as(ALICE), 'users', BOB),
+    { displayName: 'pirate', birthDate: yearsAgo(30) }, { merge: true }));
+
+console.log('\n[ age minimum, verifie par le serveur ]');
+await t('un profil de moins de 18 ans est refuse', 'ko',
+  () => setDoc(doc(as(ALICE), 'users', ALICE),
+    { displayName: 'Alice', birthDate: yearsAgo(17) }, { merge: true }));
+await t('la veille des 18 ans, encore refuse', 'ko',
+  () => setDoc(doc(as(ALICE), 'users', ALICE),
+    { displayName: 'Alice', birthDate: yearsAgo(18, 1) }, { merge: true }));
+await t('le jour des 18 ans, accepte', 'ok',
+  () => setDoc(doc(as(ALICE), 'users', ALICE),
+    { displayName: 'Alice', birthDate: yearsAgo(18) }, { merge: true }));
+await t('sans date de naissance, refuse', 'ko',
+  () => setDoc(doc(as(ALICE), 'users', ALICE), { displayName: 'Alice' })); 
 
 console.log('\n[ swipes ]');
 await t('on enregistre son propre swipe', 'ok',
-  () => setDoc(doc(as(ALICE), 'swipes', ALICE, 'actions', BOB), { liked: true }));
+  () => setDoc(doc(as(ALICE), 'swipes', ALICE, 'actions', BOB),
+    { liked: true, targetUid: BOB }));
+await t('un swipe dont la cible ne correspond pas au document est refuse', 'ko',
+  () => setDoc(doc(as(ALICE), 'swipes', ALICE, 'actions', CAROL),
+    { liked: true, targetUid: DAVE }));
 await t('hasLikedMe : on lit le swipe qui nous vise', 'ok',
   () => getDoc(doc(as(ALICE), 'swipes', BOB, 'actions', ALICE)));
 await t('lecture du swipe d autrui sur un tiers refusee', 'ko',
   () => getDoc(doc(as(DAVE), 'swipes', BOB, 'actions', ALICE)));
 await t('ecriture d un swipe au nom d un autre refusee', 'ko',
-  () => setDoc(doc(as(ALICE), 'swipes', BOB, 'actions', CAROL), { liked: true }));
+  () => setDoc(doc(as(ALICE), 'swipes', BOB, 'actions', CAROL),
+    { liked: true, targetUid: CAROL }));
 
 console.log('\n[ matchs ]');
 await t('createMatch : lecture prealable d un doc inexistant', 'ok',
@@ -127,6 +155,76 @@ await t('envoi par un tiers refuse', 'ko',
     { senderId: DAVE, text: 'intrus', sentAt: new Date() }));
 await t('modification d un message envoye refusee', 'ko',
   () => updateDoc(doc(as(BOB), 'matches', MATCH_AB, 'messages', 'm1'), { text: 'edite' }));
+
+console.log('\n[ blocage ]');
+await t('on bloque quelqu un', 'ok',
+  () => setDoc(doc(as(ALICE), 'blocks', 'alice_carol'),
+    { users: [ALICE, CAROL], blockedBy: ALICE, createdAt: new Date() }));
+await t('la personne bloquee voit le blocage', 'ok',
+  () => getDoc(doc(as(CAROL), 'blocks', 'alice_carol')));
+await t('un tiers ne voit pas le blocage', 'ko',
+  () => getDoc(doc(as(DAVE), 'blocks', 'alice_carol')));
+await t('bloquer une paire dont on ne fait pas partie refuse', 'ko',
+  () => setDoc(doc(as(DAVE), 'blocks', 'bob_carol'),
+    { users: [BOB, CAROL], blockedBy: BOB, createdAt: new Date() }));
+await t('se declarer auteur d un blocage sans l etre refuse', 'ko',
+  () => setDoc(doc(as(DAVE), 'blocks', 'alice_bob'),
+    { users: [ALICE, BOB], blockedBy: DAVE, createdAt: new Date() }));
+await t('message refuse une fois le blocage pose', 'ko',
+  () => addDoc(collection(as(ALICE), 'matches', 'alice_carol', 'messages'),
+    { senderId: ALICE, text: 'malgre tout', sentAt: new Date() }));
+await t('la personne bloquee ne peut pas lever le blocage', 'ko',
+  () => deleteDoc(doc(as(CAROL), 'blocks', 'alice_carol')));
+await t('l auteur du blocage peut le lever', 'ok',
+  () => deleteDoc(doc(as(ALICE), 'blocks', 'alice_carol')));
+await t('le message repasse une fois le blocage leve', 'ok',
+  () => addDoc(collection(as(ALICE), 'matches', 'alice_carol', 'messages'),
+    { senderId: ALICE, text: 'de nouveau', sentAt: new Date() }));
+
+console.log('\n[ signalements ]');
+await t('on signale quelqu un', 'ok',
+  () => addDoc(collection(as(ALICE), 'reports'),
+    { reporterUid: ALICE, reportedUid: BOB, reason: 'photo choquante', createdAt: new Date() }));
+await t('signaler au nom d un autre refuse', 'ko',
+  () => addDoc(collection(as(ALICE), 'reports'),
+    { reporterUid: BOB, reportedUid: CAROL, reason: 'x', createdAt: new Date() }));
+await t('se signaler soi-meme refuse', 'ko',
+  () => addDoc(collection(as(ALICE), 'reports'),
+    { reporterUid: ALICE, reportedUid: ALICE, reason: 'x', createdAt: new Date() }));
+await t('relire les signalements refuse', 'ko',
+  () => getDocs(collection(as(ALICE), 'reports')));
+
+console.log('\n[ retrait d un match ]');
+await testEnv.withSecurityRulesDisabled(async (ctx) => {
+  await setDoc(doc(ctx.firestore(), 'matches', 'alice_dave'),
+    { users: [ALICE, DAVE], createdAt: new Date() });
+});
+await t('un tiers ne peut pas rompre le match', 'ko',
+  () => updateDoc(doc(as(BOB), 'matches', 'alice_dave'),
+    { endedAt: new Date(), endedBy: BOB }));
+await t('un participant se retire du match', 'ok',
+  () => updateDoc(doc(as(ALICE), 'matches', 'alice_dave'),
+    { endedAt: new Date(), endedBy: ALICE }));
+await t('message refuse une fois le match rompu', 'ko',
+  () => addDoc(collection(as(DAVE), 'matches', 'alice_dave', 'messages'),
+    { senderId: DAVE, text: 'encore la ?', sentAt: new Date() }));
+await t('un retrait ne se defait pas', 'ko',
+  () => updateDoc(doc(as(ALICE), 'matches', 'alice_dave'),
+    { endedAt: deleteField() }));
+
+console.log('\n[ jetons de notification ]');
+await t('on enregistre le jeton de son appareil', 'ok',
+  () => setDoc(doc(as(ALICE), 'users', ALICE, 'devices', 'jeton-alice'),
+    { platform: 'android', updatedAt: new Date() }));
+await t('enregistrer un jeton chez quelqu un d autre refuse', 'ko',
+  () => setDoc(doc(as(DAVE), 'users', ALICE, 'devices', 'jeton-pirate'),
+    { platform: 'android', updatedAt: new Date() }));
+await t('lire les jetons d un autre refuse', 'ko',
+  () => getDocs(collection(as(DAVE), 'users', ALICE, 'devices')));
+await t('on relit ses propres jetons', 'ok',
+  () => getDocs(collection(as(ALICE), 'users', ALICE, 'devices')));
+await t('on retire le jeton de son appareil', 'ok',
+  () => deleteDoc(doc(as(ALICE), 'users', ALICE, 'devices', 'jeton-alice')));
 
 await testEnv.cleanup();
 console.log(`\n${pass} reussis, ${fail} echoues\n`);

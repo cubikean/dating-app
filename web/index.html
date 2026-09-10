@@ -31,6 +31,25 @@
 
   <title>dating_app_boilerplate</title>
   <link rel="manifest" href="manifest.json">
+
+  <!--
+    App Check en développement local.
+
+    reCAPTCHA v3 refuse les domaines qu'il ne connaît pas, et `flutter run`
+    sert l'app depuis localhost sur un port qui change à chaque lancement.
+    Ce drapeau bascule App Check sur le fournisseur de débogage : au premier
+    chargement, la console du navigateur imprime un jeton à enregistrer dans
+    la console Firebase, sous App Check puis « Gérer les jetons de débogage ».
+
+    Le test sur le nom d'hôte garantit que rien de tout ceci ne s'active en
+    production : là, c'est bien reCAPTCHA qui atteste l'application.
+    Il doit être posé avant le démarrage de Flutter, d'où sa place ici.
+  -->
+  <script>
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+    }
+  </script>
 </head>
 <body>
   <!--

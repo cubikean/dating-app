@@ -66,6 +66,8 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Ta position sert uniquement à te proposer des profils proches, dans le rayon que tu choisis. Elle n'est jamais montrée aux autres.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Tes photos servent à illustrer ton profil. Elles ne sont lues qu'au moment où tu en choisis une.</string>
 </dict>

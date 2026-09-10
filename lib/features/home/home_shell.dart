@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import 'email_verification_banner.dart';
+
 /// Coquille commune avec bottom navigation. `navigationShell` vient de
 /// `StatefulShellRoute.indexedStack` et garde l'état de chaque onglet
 /// (ex : position de scroll) quand on navigue entre eux.
@@ -12,7 +14,12 @@ class HomeShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: navigationShell,
+      body: Column(
+        children: [
+          const EmailVerificationBanner(),
+          Expanded(child: navigationShell),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: navigationShell.currentIndex,
         onDestinationSelected: (index) => navigationShell.goBranch(

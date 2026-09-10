@@ -22,10 +22,37 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/swipes/$(other)/actions/$(request.auth.uid)).data.liked == true;
     }
 
+    // Un blocage porte le même identifiant de paire qu'un match : pour une
+    // conversation donnée, il suffit donc de tester le même identifiant.
+    function isBlocked(matchId) {
+      return exists(/databases/$(database)/documents/blocks/$(matchId));
+    }
+
+    // Un match rompu reste lisible, mais plus personne n'y écrit.
+    function isEndedMatch(matchId) {
+      return 'endedAt' in get(/databases/$(database)/documents/matches/$(matchId)).data;
+    }
+
     function isMatchParticipant(matchId) {
       return isSignedIn()
         && exists(/databases/$(database)/documents/matches/$(matchId))
         && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.users;
+    }
+
+    // L'âge minimum n'était vérifié que par le sélecteur de date de l'écran
+    // d'inscription. Un client modifié pouvait donc écrire n'importe quelle
+    // date de naissance. Le contrôle appartient au serveur.
+    //
+    // La comparaison est faite année par année plutôt qu'en durée : compter
+    // en jours se trompe de quelques jours à cause des années bissextiles,
+    // et refuserait ou accepterait à tort les profils nés près de la limite.
+    function isAdult(birthDate) {
+      return birthDate is timestamp
+        && (request.time.year() - birthDate.year() > 18
+            || (request.time.year() - birthDate.year() == 18
+                && (request.time.month() > birthDate.month()
+                    || (request.time.month() == birthDate.month()
+                        && request.time.day() >= birthDate.day()))));
     }
 
     // --- Profils ---
@@ -33,8 +60,19 @@ service cloud.firestore {
     // et les écrans de match et de chat affichent celui de l'autre personne.
     match /users/{uid} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && request.auth.uid == uid;
+      allow create, update: if isSignedIn()
+        && request.auth.uid == uid
+        && isAdult(request.resource.data.birthDate);
+      // La suppression passe par la fonction Cloud, qui contourne les règles.
       allow delete: if false;
+
+      // Jetons de notification, un par appareil. Strictement privés : ils
+      // permettraient sinon d'envoyer des notifications à quelqu'un d'autre.
+      // Les fonctions Cloud les lisent avec le SDK d'administration, qui ne
+      // passe pas par ces règles.
+      match /devices/{token} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
     }
 
     // --- Swipes ---
@@ -43,7 +81,11 @@ service cloud.firestore {
     match /swipes/{ownerUid}/actions/{targetUid} {
       allow read: if isSignedIn()
         && (request.auth.uid == ownerUid || request.auth.uid == targetUid);
-      allow create, update: if isSignedIn() && request.auth.uid == ownerUid;
+      // `targetUid` doit refléter l'identifiant du document : la suppression
+      // de compte s'appuie dessus pour retrouver les swipes reçus.
+      allow create, update: if isSignedIn()
+        && request.auth.uid == ownerUid
+        && request.resource.data.targetUid == targetUid;
       allow delete: if false;
     }
 
@@ -63,18 +105,49 @@ service cloud.firestore {
 
       // Après coup, seuls `lastMessage` et `lastMessageAt` évoluent : la liste
       // des participants est figée.
+      // Se retirer d'un match passe par ce chemin : la liste des participants
+      // reste figée, et une rupture ne se défait pas.
       allow update: if isSignedIn()
         && request.auth.uid in resource.data.users
-        && request.resource.data.users == resource.data.users;
+        && request.resource.data.users == resource.data.users
+        && (!('endedAt' in resource.data) || 'endedAt' in request.resource.data);
       allow delete: if false;
 
       match /messages/{messageId} {
         allow read: if isMatchParticipant(matchId);
         allow create: if isMatchParticipant(matchId)
-          && request.resource.data.senderId == request.auth.uid;
+          && request.resource.data.senderId == request.auth.uid
+          && !isBlocked(matchId)
+          && !isEndedMatch(matchId);
         // Un message envoyé n'est ni modifiable ni supprimable.
         allow update, delete: if false;
       }
+    }
+
+    // --- Blocages ---
+    // Un seul document par paire, visible des deux personnes concernées : le
+    // blocage coupe le lien dans les deux sens.
+    match /blocks/{blockId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.users;
+      allow create: if isSignedIn()
+        && request.resource.data.users.size() == 2
+        && request.auth.uid in request.resource.data.users
+        && request.resource.data.blockedBy == request.auth.uid;
+      allow update: if false;
+      // Seule la personne qui a posé le blocage peut le lever.
+      allow delete: if isSignedIn()
+        && resource.data.blockedBy == request.auth.uid;
+    }
+
+    // --- Signalements ---
+    // Écriture seule : rien n'est relu depuis l'application, la modération se
+    // fait hors de celle-ci. On ne peut pas signaler quelqu'un en son nom.
+    match /reports/{reportId} {
+      allow create: if isSignedIn()
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.reportedUid is string
+        && request.resource.data.reportedUid != request.auth.uid;
+      allow read, update, delete: if false;
     }
 
     // Rappel : tout chemin non listé ci-dessus est refusé par défaut.

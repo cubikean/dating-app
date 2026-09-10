@@ -4,12 +4,15 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/widgets/age_range_field.dart';
 import '../../core/widgets/error_view.dart';
+import '../../core/widgets/search_radius_field.dart';
 import '../../core/widgets/loading_indicator.dart';
 import '../../core/widgets/primary_button.dart';
 import '../../models/user_profile.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/profile_provider.dart';
+import '../../services/location_service.dart';
 import '../../services/storage_service.dart';
 
 final _storageServiceProvider = Provider((ref) => StorageService());
@@ -25,7 +28,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   final _bioController = TextEditingController();
   bool _initialized = false;
   bool _isSaving = false;
-  bool _isUploadingPhoto = false;
+  bool _isBusyWithPhoto = false;
+  bool _isLocating = false;
   UserProfile? _draft;
 
   void _initFromProfile(UserProfile profile) {
@@ -50,7 +54,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
       return;
     }
 
-    setState(() => _isUploadingPhoto = true);
+    setState(() => _isBusyWithPhoto = true);
     final storage = ref.read(_storageServiceProvider);
     String? uploadedUrl;
     try {
@@ -78,8 +82,83 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         showErrorSnackBar(context, "Photo non ajoutée.", error: error);
       }
     } finally {
-      if (mounted) setState(() => _isUploadingPhoto = false);
+      if (mounted) setState(() => _isBusyWithPhoto = false);
     }
+  }
+
+  Future<void> _useMyLocation() async {
+    if (_draft == null) return;
+    setState(() => _isLocating = true);
+    try {
+      final position =
+          await ref.read(locationServiceProvider).currentPosition();
+      if (mounted) {
+        setState(() => _draft = _draft!.copyWith(location: position));
+      }
+    } on LocationDeniedException catch (refusal) {
+      // Un refus n'est pas une panne : on l'explique sans jargon technique.
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(refusal.message)));
+      }
+    } catch (error) {
+      if (mounted) {
+        showErrorSnackBar(context, 'Position introuvable.', error: error);
+      }
+    } finally {
+      if (mounted) setState(() => _isLocating = false);
+    }
+  }
+
+  Future<void> _removePhoto(String url) async {
+    if (_draft == null || _isBusyWithPhoto) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Retirer cette photo ?'),
+        content: const Text('Elle sera effacée de ton profil et du stockage.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Retirer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isBusyWithPhoto = true);
+    final updated = _draft!.copyWith(
+      photoUrls:
+          _draft!.photoUrls.where((existing) => existing != url).toList(),
+    );
+
+    // Le profil est mis a jour en premier : une adresse encore referencee mais
+    // absente du stockage afficherait une image cassee a tout le monde.
+    try {
+      await ref.read(profileControllerProvider).save(updated);
+      if (mounted) setState(() => _draft = updated);
+    } catch (error) {
+      if (mounted) {
+        showErrorSnackBar(context, 'Photo non retiree.', error: error);
+        setState(() => _isBusyWithPhoto = false);
+      }
+      return;
+    }
+
+    // Le fichier part ensuite. S'il resiste, la photo a quand meme disparu du
+    // profil : mieux vaut un fichier orphelin qu'une image cassee affichee.
+    try {
+      await ref.read(_storageServiceProvider).deleteProfilePhoto(url);
+    } catch (_) {
+      // Rien a signaler a l'utilisateur : de son point de vue, c'est fait.
+    }
+    if (mounted) setState(() => _isBusyWithPhoto = false);
   }
 
   Future<void> _save() async {
@@ -133,16 +212,56 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                     ...draft.photoUrls.map(
                       (url) => Padding(
                         padding: const EdgeInsets.only(right: 8),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.network(url,
-                              width: 100, height: 100, fit: BoxFit.cover),
+                        child: Stack(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.network(
+                                url,
+                                width: 100,
+                                height: 100,
+                                fit: BoxFit.cover,
+                                // Une photo illisible ne doit pas casser
+                                // l'écran. Le cas le plus courant sur le web
+                                // est un bucket sans CORS : voir le README.
+                                errorBuilder: (context, error, stack) =>
+                                    Container(
+                                  width: 100,
+                                  height: 100,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                                  child:
+                                      const Icon(Icons.broken_image_outlined),
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 2,
+                              right: 2,
+                              child: Material(
+                                color: Colors.black54,
+                                shape: const CircleBorder(),
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: _isBusyWithPhoto
+                                      ? null
+                                      : () => _removePhoto(url),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(4),
+                                    child: Icon(Icons.close,
+                                        size: 16, color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
                     if (draft.photoUrls.length < AppConstants.maxProfilePhotos)
                       GestureDetector(
-                        onTap: _isUploadingPhoto ? null : _addPhoto,
+                        onTap: _isBusyWithPhoto ? null : _addPhoto,
                         child: Container(
                           width: 100,
                           height: 100,
@@ -151,7 +270,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                             border: Border.all(
                                 color: Theme.of(context).colorScheme.outline),
                           ),
-                          child: _isUploadingPhoto
+                          child: _isBusyWithPhoto
                               ? const Center(
                                   child:
                                       CircularProgressIndicator(strokeWidth: 2))
@@ -162,6 +281,24 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 ),
               ),
               const SizedBox(height: 20),
+              AgeRangeField(
+                ageMin: draft.ageMin,
+                ageMax: draft.ageMax,
+                onChanged: (min, max) => setState(() {
+                  _draft = draft.copyWith(ageMin: min, ageMax: max);
+                }),
+              ),
+              const SizedBox(height: 8),
+              SearchRadiusField(
+                radiusKm: draft.searchRadiusKm,
+                hasLocation: draft.location != null,
+                isLocating: _isLocating,
+                onRadiusChanged: (value) => setState(() {
+                  _draft = draft.copyWith(searchRadiusKm: value);
+                }),
+                onUseMyLocation: _useMyLocation,
+              ),
+              const SizedBox(height: 8),
               TextField(
                 controller: _bioController,
                 maxLines: 4,

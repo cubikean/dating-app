@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app.dart';
+import 'core/app_check.dart';
 import 'firebase_options.dart' as firebase_options;
 
 Future<void> main() async {
@@ -14,6 +15,10 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: firebase_options.DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Atteste que les requêtes viennent de cette application. Inoffensif tant
+  // que l'application des règles n'est pas activée dans la console Firebase.
+  await activateAppCheck();
 
   // Cache local : activé par défaut sur mobile, il doit être demandé
   // explicitement sur le web. Sans lui, l'app est vide dès que le réseau

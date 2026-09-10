@@ -9,6 +9,10 @@ import '../models/user_profile.dart';
 /// Objectif : garder les widgets et providers ignorants des détails
 /// Firestore (chemins de collections, conversion de documents, etc.).
 class FirestoreService {
+  /// Nombre maximum de lots lus pour composer une page de découverte, quand
+  /// les exclusions vident les premiers lots.
+  static const _maxDiscoveryRounds = 5;
+
   final FirebaseFirestore _db;
 
   FirestoreService({FirebaseFirestore? firestore})
@@ -69,16 +73,97 @@ class FirestoreService {
   /// l'utilisateur courant. Pour un vrai algorithme de matching (distance,
   /// préférences, utilisateurs déjà swipés...), remplacer par une Cloud
   /// Function ou une requête composite plus poussée.
-  Future<List<UserProfile>> fetchDiscoveryCandidates({
-    required String excludeUid,
-    int limit = 20,
+  /// Une page de candidats pour le swipe.
+  ///
+  /// Le filtrage réciproque se fait côté Firestore : le candidat est d'un
+  /// genre que [viewer] cherche, et cherche lui-même le genre de [viewer].
+  /// Les profils inachevés sont écartés.
+  ///
+  /// L'exclusion de soi-même et des profils déjà swipés ne s'exprime pas dans
+  /// une requête : Firestore ne sait pas écarter une liste arbitraire
+  /// d'identifiants. On lit donc par lots jusqu'à remplir la page, en bornant
+  /// le nombre d'allers-retours pour ne pas s'emballer sur une base déjà
+  /// presque entièrement swipée.
+  Future<({List<UserProfile> candidates, String? nextCursor})>
+      fetchDiscoveryCandidates({
+    required UserProfile viewer,
+    Set<String> excludeUids = const {},
+    String? startAfterUid,
+    int limit = AppConstants.discoveryPageSize,
   }) async {
-    final snapshot = await _users.limit(limit + 1).get();
-    return snapshot.docs
-        .where((doc) => doc.id != excludeUid)
-        .map((doc) => UserProfile.fromMap(doc.id, doc.data()))
-        .take(limit)
-        .toList();
+    // Sans préférence renseignée, aucune requête n'a de sens : `whereIn` sur
+    // une liste vide lève une exception.
+    if (viewer.lookingFor.isEmpty) {
+      return (candidates: const <UserProfile>[], nextCursor: null);
+    }
+
+    final wantedGenders = viewer.lookingFor.map((g) => g.name).toList();
+    final collected = <UserProfile>[];
+    String? cursor = startAfterUid;
+
+    for (var round = 0; round < _maxDiscoveryRounds; round++) {
+      var query = _users
+          .where('onboardingComplete', isEqualTo: true)
+          .where('gender', whereIn: wantedGenders)
+          .where('lookingFor', arrayContains: viewer.gender.name)
+          .orderBy(FieldPath.documentId)
+          .limit(limit);
+      if (cursor != null) {
+        final cursorDoc = await _users.doc(cursor).get();
+        if (!cursorDoc.exists) break;
+        query = query.startAfterDocument(cursorDoc);
+      }
+
+      final snapshot = await query.get();
+      if (snapshot.docs.isEmpty) {
+        return (candidates: collected, nextCursor: null);
+      }
+
+      for (final doc in snapshot.docs) {
+        cursor = doc.id;
+        if (doc.id == viewer.uid || excludeUids.contains(doc.id)) continue;
+
+        // L'âge se filtre ici et non dans la requête : Firestore n'accepte
+        // qu'un intervalle par requête, et il est déjà pris par le genre et
+        // la réciprocité. Les tours de boucle ci-dessus rattrapent les lots
+        // que ce tri vide.
+        final candidate = UserProfile.fromMap(doc.id, doc.data());
+        if (!viewer.acceptsAgeOf(candidate) ||
+            !candidate.acceptsAgeOf(viewer)) {
+          continue;
+        }
+        // La distance se filtre elle aussi ici. Firestore ne sait pas trier
+        // par distance : passer à l'échelle demanderait un géohachage et une
+        // requête par plage de préfixes, ce qui n'a pas de sens tant que la
+        // base tient dans quelques lots.
+        if (!viewer.acceptsDistanceOf(candidate) ||
+            !candidate.acceptsDistanceOf(viewer)) {
+          continue;
+        }
+
+        collected.add(candidate);
+        if (collected.length >= limit) {
+          return (candidates: collected, nextCursor: cursor);
+        }
+      }
+
+      // Lot incomplet : il n'y a plus rien après.
+      if (snapshot.docs.length < limit) {
+        return (candidates: collected, nextCursor: null);
+      }
+    }
+
+    return (candidates: collected, nextCursor: cursor);
+  }
+
+  /// Identifiants des profils que [uid] a déjà swipés, dans un sens ou l'autre.
+  Future<Set<String>> fetchSwipedUids(String uid) async {
+    final snapshot = await _db
+        .collection(AppConstants.swipesCollection)
+        .doc(uid)
+        .collection('actions')
+        .get();
+    return snapshot.docs.map((doc) => doc.id).toSet();
   }
 
   // --- Swipes & matchs ---
@@ -93,7 +178,14 @@ class FirestoreService {
         .doc(uid)
         .collection('actions')
         .doc(targetUid)
-        .set({'liked': liked, 'timestamp': FieldValue.serverTimestamp()});
+        .set({
+      'liked': liked,
+      // Redondant avec l'identifiant du document, mais indispensable : la
+      // suppression de compte doit retrouver les swipes que les autres ont
+      // posés sur une personne, ce qui suppose de pouvoir filtrer dessus.
+      'targetUid': targetUid,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
   }
 
   /// Vérifie si `targetUid` a déjà liké `uid` (= match réciproque).
@@ -133,11 +225,82 @@ class FirestoreService {
   /// dont le nombre reste petit, donc trier ici ne coûte rien de plus.
   Stream<List<MatchModel>> watchMatchesForUser(String uid) {
     return _matches.where('users', arrayContains: uid).snapshots().map((snap) {
-      final matches =
-          snap.docs.map((d) => MatchModel.fromMap(d.id, d.data())).toList();
+      final matches = snap.docs
+          .map((d) => MatchModel.fromMap(d.id, d.data()))
+          .where((match) => !match.isEnded)
+          .toList();
       matches.sort((a, b) => (b.lastMessageAt ?? b.createdAt)
           .compareTo(a.lastMessageAt ?? a.createdAt));
       return matches;
+    });
+  }
+
+  /// Retire [uid] du match : la conversation disparaît des deux côtés et
+  /// personne ne peut plus y écrire.
+  ///
+  /// Le document est marqué plutôt que supprimé. Les messages vivent dans une
+  /// sous-collection, qu'une suppression laisserait orpheline, et un match
+  /// rompu reste une pièce utile en cas de signalement.
+  Future<void> endMatch({required String matchId, required String uid}) {
+    return _matches.doc(matchId).update({
+      'endedAt': Timestamp.fromDate(DateTime.now()),
+      'endedBy': uid,
+    });
+  }
+
+  // --- Signalement et blocage ---
+
+  /// Bloque [targetUid]. Le document porte l'identifiant de paire, celui-là
+  /// même qu'utiliserait leur match : les règles peuvent donc vérifier
+  /// l'existence d'un blocage à partir du seul `matchId`.
+  Future<void> blockUser({
+    required String uid,
+    required String targetUid,
+  }) {
+    final id = MatchModel.buildId(uid, targetUid);
+    return _db.collection(AppConstants.blocksCollection).doc(id).set({
+      'users': [uid, targetUid]..sort(),
+      'blockedBy': uid,
+      'createdAt': Timestamp.fromDate(DateTime.now()),
+    });
+  }
+
+  /// Retire un blocage. Seule la personne qui l'a posé peut le lever.
+  Future<void> unblockUser({
+    required String uid,
+    required String targetUid,
+  }) {
+    final id = MatchModel.buildId(uid, targetUid);
+    return _db.collection(AppConstants.blocksCollection).doc(id).delete();
+  }
+
+  /// Personnes bloquées, dans un sens ou dans l'autre : un blocage coupe le
+  /// lien pour les deux, celui qui bloque comme celui qui est bloqué.
+  Stream<Set<String>> watchBlockedUids(String uid) {
+    return _db
+        .collection(AppConstants.blocksCollection)
+        .where('users', arrayContains: uid)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .expand((doc) => List<String>.from(doc.data()['users'] as List))
+            .where((other) => other != uid)
+            .toSet());
+  }
+
+  /// Enregistre un signalement. Écriture seule : personne ne relit ces
+  /// documents depuis l'application, la modération passe par la console.
+  Future<void> reportUser({
+    required String reporterUid,
+    required String reportedUid,
+    required String reason,
+    String? matchId,
+  }) {
+    return _db.collection(AppConstants.reportsCollection).add({
+      'reporterUid': reporterUid,
+      'reportedUid': reportedUid,
+      'reason': reason,
+      if (matchId != null) 'matchId': matchId,
+      'createdAt': Timestamp.fromDate(DateTime.now()),
     });
   }
 

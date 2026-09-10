@@ -11,13 +11,23 @@ class MatchModel extends Equatable {
   final String? lastMessage;
   final DateTime? lastMessageAt;
 
+  /// Non nul quand l'un des deux s'est retiré du match. Le document reste en
+  /// base plutôt que d'être supprimé : les messages vivent dessous, et un
+  /// historique sert à la modération.
+  final DateTime? endedAt;
+  final String? endedBy;
+
   const MatchModel({
     required this.id,
     required this.userIds,
     required this.createdAt,
     this.lastMessage,
     this.lastMessageAt,
+    this.endedAt,
+    this.endedBy,
   });
+
+  bool get isEnded => endedAt != null;
 
   static String buildId(String uidA, String uidB) {
     final sorted = [uidA, uidB]..sort();
@@ -34,6 +44,8 @@ class MatchModel extends Equatable {
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       lastMessage: map['lastMessage'] as String?,
       lastMessageAt: (map['lastMessageAt'] as Timestamp?)?.toDate(),
+      endedAt: (map['endedAt'] as Timestamp?)?.toDate(),
+      endedBy: map['endedBy'] as String?,
     );
   }
 
@@ -46,10 +58,12 @@ class MatchModel extends Equatable {
       // trie sur ce champ, or Firestore exclut les documents où le champ de
       // tri est absent. Un match sans conversation resterait donc invisible.
       'lastMessageAt': Timestamp.fromDate(lastMessageAt ?? createdAt),
+      if (endedAt != null) 'endedAt': Timestamp.fromDate(endedAt!),
+      if (endedBy != null) 'endedBy': endedBy,
     };
   }
 
   @override
   List<Object?> get props =>
-      [id, userIds, createdAt, lastMessage, lastMessageAt];
+      [id, userIds, createdAt, lastMessage, lastMessageAt, endedAt, endedBy];
 }

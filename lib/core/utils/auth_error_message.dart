@@ -10,6 +10,13 @@ String authErrorMessage(Object error) {
     return 'Une erreur est survenue. Réessaie dans un instant.';
   }
 
+  // App Check est appliqué côté serveur : le refus arrive avec un code
+  // d'erreur générique mais un message explicite, d'où ce test sur le texte.
+  if ((error.message ?? '').contains('App Check')) {
+    return "L'application n'est pas reconnue par Firebase. Au démarrage, "
+        'fournis la clé reCAPTCHA : --dart-define=RECAPTCHA_SITE_KEY=…';
+  }
+
   switch (error.code) {
     case 'invalid-credential':
     case 'invalid-login-credentials':

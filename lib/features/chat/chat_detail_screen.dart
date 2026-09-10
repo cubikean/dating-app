@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/widgets/error_view.dart';
@@ -7,6 +8,7 @@ import '../../core/widgets/loading_indicator.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/matches_provider.dart';
+import '../../providers/safety_provider.dart';
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
   final String matchId;
@@ -48,6 +50,124 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
+  /// Motifs proposés au signalement. Une liste fermée vaut mieux qu'un champ
+  /// libre : elle se trie et se compte du côté de la modération.
+  static const _reportReasons = [
+    'Photos ou propos à caractère sexuel',
+    'Harcèlement ou insultes',
+    'Faux profil ou usurpation',
+    'Arnaque ou sollicitation commerciale',
+    'Comportement dangereux',
+    'Autre',
+  ];
+
+  Future<void> _report(String otherUid) async {
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Signaler cette personne'),
+        children: [
+          for (final reason in _reportReasons)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, reason),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Text(reason),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (reason == null || !mounted) return;
+
+    try {
+      await ref.read(safetyControllerProvider).report(
+            targetUid: otherUid,
+            reason: reason,
+            matchId: widget.matchId,
+          );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Signalement envoyé. Notre équipe va le regarder.'),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        showErrorSnackBar(context, 'Signalement non envoyé.', error: error);
+      }
+    }
+  }
+
+  Future<void> _confirmUnmatch(String? otherName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title:
+            Text('Se retirer du match avec ${otherName ?? 'cette personne'} ?'),
+        content: const Text(
+          'La conversation disparaîtra de vos deux listes et personne ne '
+          'pourra plus y écrire. Ce retrait ne se défait pas.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Se retirer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await ref.read(safetyControllerProvider).endMatch(widget.matchId);
+      if (mounted) context.pop();
+    } catch (error) {
+      if (mounted) {
+        showErrorSnackBar(context, 'Retrait impossible.', error: error);
+      }
+    }
+  }
+
+  Future<void> _confirmBlock(String otherUid, String? otherName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Bloquer ${otherName ?? 'cette personne'} ?'),
+        content: const Text(
+          "Vous ne pourrez plus vous écrire et la conversation disparaîtra de "
+          'vos deux listes. Cette personne ne sera pas prévenue.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Bloquer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await ref.read(safetyControllerProvider).block(otherUid);
+      // La conversation n'existe plus pour cet utilisateur : on quitte l'écran.
+      if (mounted) context.pop();
+    } catch (error) {
+      if (mounted) {
+        showErrorSnackBar(context, 'Blocage impossible.', error: error);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final messagesAsync = ref.watch(chatMessagesProvider(widget.matchId));
@@ -57,12 +177,59 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     // conversations : afficher le prénom ne coûte aucune lecture de plus.
     final match = ref.watch(matchByIdProvider(widget.matchId));
     final profiles = ref.watch(matchProfilesProvider).valueOrNull ?? const {};
-    final otherName = (match != null && myUid != null)
-        ? profiles[match.otherUserId(myUid)]?.name
-        : null;
+    final otherUid =
+        (match != null && myUid != null) ? match.otherUserId(myUid) : null;
+    final otherName = otherUid != null ? profiles[otherUid]?.name : null;
 
     return Scaffold(
-      appBar: AppBar(title: Text(otherName ?? 'Conversation')),
+      appBar: AppBar(
+        title: Text(otherName ?? 'Conversation'),
+        actions: [
+          if (otherUid != null)
+            PopupMenuButton<_SafetyAction>(
+              tooltip: 'Signaler ou bloquer',
+              onSelected: (action) {
+                switch (action) {
+                  case _SafetyAction.report:
+                    _report(otherUid);
+                  case _SafetyAction.unmatch:
+                    _confirmUnmatch(otherName);
+                  case _SafetyAction.block:
+                    _confirmBlock(otherUid, otherName);
+                }
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: _SafetyAction.report,
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.flag_outlined),
+                    title: Text('Signaler'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _SafetyAction.unmatch,
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.heart_broken_outlined),
+                    title: Text('Se retirer du match'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _SafetyAction.block,
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.block),
+                    title: Text('Bloquer'),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
       body: Column(
         children: [
           Expanded(
@@ -161,3 +328,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     );
   }
 }
+
+/// Actions du menu de sécurité, en haut de la conversation.
+enum _SafetyAction { report, unmatch, block }

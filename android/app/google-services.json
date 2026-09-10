@@ -1,0 +1,82 @@
+{
+  "project_info": {
+    "project_number": "482039734151",
+    "project_id": "dating-app-88dd9",
+    "storage_bucket": "dating-app-88dd9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:482039734151:android:95548ee967fe6c08833d22",
+        "android_client_info": {
+          "package_name": "com.dating.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "482039734151-qc6s7g1i6gut1ev55t81o2s57271fpi3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyChkr33zMcAS7PK9fKf4mps4gWGidohdUs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "482039734151-qc6s7g1i6gut1ev55t81o2s57271fpi3.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "482039734151-r3o8esljjr22dmjj22dgugg2vifhmp7i.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.dating.app"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:482039734151:android:4b126afe4b774e62833d22",
+        "android_client_info": {
+          "package_name": "com.example.dating_app_boilerplate"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "482039734151-qc6s7g1i6gut1ev55t81o2s57271fpi3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyChkr33zMcAS7PK9fKf4mps4gWGidohdUs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "482039734151-qc6s7g1i6gut1ev55t81o2s57271fpi3.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "482039734151-r3o8esljjr22dmjj22dgugg2vifhmp7i.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.dating.app"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
